@@ -10,9 +10,7 @@ namespace MidiToWav
     {
         static void Main(string[] args)
         {
-            //TODO  Covert to standard parameter passing.
-
-            MidiStream ms = new MidiStream("africafromsib.mid");
+            MidiStream ms = new MidiStream(args[0]);
 
         }
     }
