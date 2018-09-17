@@ -1,6 +1,5 @@
-﻿using System.IO;
-using System.Collections.Generic;
-using System;
+﻿using System.Collections.Generic;
+using System.IO;
 
 namespace MidiToWav
 {
@@ -104,6 +103,23 @@ namespace MidiToWav
                             dataPointer++;
                         }
                         dataPointer++;
+                    }
+                    else if (data[dataPointer] == 0xF2)  //song position pointer
+                    {
+                        tmpEvent.Message.Add(data[dataPointer++]);
+                        tmpEvent.Message.Add(data[dataPointer++]);
+                        tmpEvent.Message.Add(data[dataPointer++]);
+                    } else if(data[dataPointer] == 0xF3) //song select
+                    {
+                        tmpEvent.Message.Add(data[dataPointer++]);
+                        tmpEvent.Message.Add(data[dataPointer++]);
+                    } else if(data[dataPointer] != 0xFF) //all other common and real-times except metas
+                    {
+                        tmpEvent.Message.Add(data[dataPointer++]);
+                    } else //all that's left is 0xFF, the META events.
+                    {
+                        tmpEvent.Message.Add(data[dataPointer++]);
+
                     }
 
                 }
