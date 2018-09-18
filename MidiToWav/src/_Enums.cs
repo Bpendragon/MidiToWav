@@ -61,6 +61,7 @@
         TimeSignature = 0x58,
         KeySignature = 0x59,
         SequencerSpecific = 0x7F,
+        None = 0x80,
     }
 
     public enum MidiController // for sanity I'm going to just use the dec values, but know that in the file they are hex

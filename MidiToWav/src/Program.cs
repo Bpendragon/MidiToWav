@@ -11,7 +11,7 @@ namespace MidiToWav
         static void Main(string[] args)
         {
             MidiStream ms = new MidiStream(args[0]);
-
+            var g = 1 + 1;
         }
     }
 }

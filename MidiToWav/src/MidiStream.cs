@@ -47,7 +47,7 @@ namespace MidiToWav
 
             Header.Format = (MidiFormat)(data[dataPointer++] << 8 | data[dataPointer++]);
             uint numTracks = (uint)(data[dataPointer++] << 8 | data[dataPointer++]);
-
+            Header.NumTracks = numTracks;
             Header.Division = new DivisionInfo((ushort)(data[dataPointer++] << 8 | data[dataPointer++]));
 
 
@@ -68,7 +68,9 @@ namespace MidiToWav
 
                 var target = dataPointer + length;
 
-                while (dataPointer < target)
+                MetaEventType LastMessage = MetaEventType.None;
+
+                while (LastMessage != MetaEventType.EndOfTrack)
                 {
                     //First item on each time through the loop get the Delta Time
                     uint delta_counter = 0;
@@ -81,137 +83,101 @@ namespace MidiToWav
                     //this gets the last byte added on.
                     delta_counter = (delta_counter << 7 | (byte)(data[dataPointer] & 0x7F));
                     dataPointer++;
-
-
-
                     var tmpEvent = new MidiTrackEvent(delta_counter);
 
-                    if (data[dataPointer] < 0xF0 && (data[dataPointer] & 0xC0) != 0xC0 && (data[dataPointer] & 0xD0) != 0xD0) //all 2 command "voice" messages
+
+                    if ((data[dataPointer] >> 4) < 0x8)
                     {
-                        //unrolling the loop because it's so short
-                        tmpEvent.Data.Add(data[dataPointer++]);
-                        tmpEvent.Data.Add(data[dataPointer++]);
-                        tmpEvent.Data.Add(data[dataPointer++]);
+                        throw new FileLoadException(data[dataPointer] + " is not a valid message identifier");
                     }
-                    else if ((data[dataPointer] >> 4) == 0xC || (data[dataPointer] >> 4) == 0xD) //these two only take 2 args
+                    else if ((data[dataPointer] >> 4) != 0xF)
                     {
-                        tmpEvent.Data.Add(data[dataPointer++]);
-                        tmpEvent.Data.Add(data[dataPointer++]);
+                        tmpEvent.EventType = (MidiTrackEventType)(data[dataPointer] >> 4);
                     }
-                    else if (data[dataPointer] == 0xF0) //system exclusive, really don't care here
+                    else
                     {
-                        while (data[dataPointer] != 0xF7)
+                        tmpEvent.EventType = (MidiTrackEventType)data[dataPointer];
+                    }
+
+
+
+                    if (tmpEvent.EventType == MidiTrackEventType.Meta)
+                    {
+                        dataPointer++; // do this here because we still need the datapointer to know the channel for the voice messages
+                        tmpEvent.MetaType = (MetaEventType)(data[dataPointer++]);
+
+                        uint msgLength = 0;
+                        while (data[dataPointer] >= 0x80)
                         {
+                            msgLength = (msgLength << 7 | (byte)(data[dataPointer] & 0x7F));
                             dataPointer++;
                         }
-                        dataPointer++;
-                    }
-                    else if (data[dataPointer] == 0xF2)  //song position pointer
-                    {
-                        tmpEvent.Data.Add(data[dataPointer++]);
-                        tmpEvent.Data.Add(data[dataPointer++]);
-                        tmpEvent.Data.Add(data[dataPointer++]);
-                    }
-                    else if (data[dataPointer] == 0xF3) //song select
-                    {
-                        tmpEvent.Data.Add(data[dataPointer++]);
-                        tmpEvent.Data.Add(data[dataPointer++]);
-                    }
-                    else if (data[dataPointer] != 0xFF) //all other common and real-times except metas
-                    {
-                        tmpEvent.Data.Add(data[dataPointer++]);
-                    }
-                    else //all that's left is 0xFF, the META events.
-                    {
-                        tmpEvent.Data.Add(data[dataPointer++]);
-                        switch (data[dataPointer])
-                        {
-                            case 0x00: //Sequence Number
-                                tmpEvent.Data.Add(data[dataPointer++]);
-                                tmpEvent.Data.Add(data[dataPointer++]);
-                                tmpEvent.Data.Add(data[dataPointer++]);
-                                break;
-                            case 0x01:
-                            case 0x02:
-                            case 0x03:
-                            case 0x04:
-                            case 0x05:
-                            case 0x06:
-                            case 0x07:
-                            case 0x7F://Text Events of various types (except 7f which is sequencer specific)
-                                tmpEvent.Data.Add(data[dataPointer++]);
-                                uint len_counter = 0;
-                                while (data[dataPointer] >= 0x80)
-                                {
-                                    delta_counter = (len_counter << 7 | (byte)(data[dataPointer] & 0x7F));
-                                    dataPointer++;
-                                }
 
-                                //this gets the last byte added on.
-                                len_counter = (len_counter << 7 | (byte)(data[dataPointer] & 0x7F));
+                        //this gets the last byte added on.
+                        msgLength = (msgLength << 7 | (byte)(data[dataPointer] & 0x7F));
+                        dataPointer++;
+
+                        for (int j = 0; j < msgLength; j++)
+                        {
+                            tmpEvent.Data.Add(data[dataPointer++]);
+                        }
+
+                        if (tmpEvent.MetaType == MetaEventType.TrackName)
+                        {
+                            track.Name = Encoding.ASCII.GetString(tmpEvent.Data.ToArray());
+                        }
+                    }
+                    else
+                    {
+                        switch (tmpEvent.EventType)
+                        {
+                            case MidiTrackEventType.NoteOff:
+                            case MidiTrackEventType.NoteOn:
+                            case MidiTrackEventType.PolyphonicAftertouch:
+                                tmpEvent.ChannelNumber = data[dataPointer++] & 0x0F;
+                                tmpEvent.KeyNumber = data[dataPointer++];
+                                tmpEvent.Value = data[dataPointer++];
+                                break;
+
+                            case MidiTrackEventType.ControlChange:
+                                tmpEvent.ChannelNumber = data[dataPointer++] & 0x0F;
+                                tmpEvent.Controller = (MidiController)(data[dataPointer++]);
+                                tmpEvent.Value = data[dataPointer++];
+                                break;
+                            case MidiTrackEventType.PitchWheelChange:
+                            case MidiTrackEventType.SongPositionPointer:
+                                dataPointer++;
+                                tmpEvent.FourteenBit = (ushort)(data[dataPointer++] | data[dataPointer++] << 7);
+                                break;
+
+                            case MidiTrackEventType.SongSelect:
+                            case MidiTrackEventType.ChannelAftertouch:
+                            case MidiTrackEventType.ProgramChange:
+                                dataPointer++;
+                                tmpEvent.Value = data[dataPointer++];
+                                break;
+
+                            case MidiTrackEventType.SystemExclusive:
+                                dataPointer++;
+                                while (data[dataPointer] != 0xF7)
+                                {
+                                    tmpEvent.Data.Add(data[dataPointer++]);
+                                }
                                 dataPointer++;
 
-                                for (int k = 0; k < len_counter; k++)
-                                {
-                                    tmpEvent.Data.Add(data[dataPointer + k]);
-                                }
-                                dataPointer += len_counter;
-                                break;
-
-                            case 0x20: //midi channel prefix
-                                tmpEvent.Data.Add(data[dataPointer++]);
-                                tmpEvent.Data.Add(data[dataPointer++]);
-                                tmpEvent.Data.Add(data[dataPointer++]);
-                                break;
-                            case 0x2F: //end of track
-                                tmpEvent.Data.Add(data[dataPointer++]);
-                                tmpEvent.Data.Add(data[dataPointer++]);
-                                break;
-                            case 0x51: //Set Tempo
-
-                                for (int k = 0; k < 5; k++)
-                                {
-                                    tmpEvent.Data.Add(data[dataPointer++]);
-                                }
-                                break;
-                            case 0x54: //smpte offset
-                                for (int k = 0; k < 7; k++)
-                                {
-                                    tmpEvent.Data.Add(data[dataPointer++]);
-                                }
-                                break;
-                            case 0x58: //Time Signature
-                                for (int k = 0; k < 6; k++)
-                                {
-                                    tmpEvent.Data.Add(data[dataPointer++]);
-                                }
-                                break;
-                            case 0x59: //Key Signature
-                                for (int k = 0; k < 4; k++)
-                                {
-                                    tmpEvent.Data.Add(data[dataPointer++]);
-                                }
                                 break;
                             default:
                                 break;
                         }
                     }
-
-                    if (tmpEvent.Data[0] == 0xFF && tmpEvent.Data[1] == 0x03) //if the event is a name, add it to the track now.
-                    {
-                        track.Name = Encoding.ASCII.GetString(tmpEvent.Data.ToArray(), 2, tmpEvent.Data.Count - 2);
-
-                    }
                     track.Events.Add(tmpEvent);
-
+                    LastMessage = tmpEvent.MetaType;
                 }
 
                 tracks.Add(track);
 
             }
             return tracks;
-
-
         }
     }
 
@@ -236,7 +202,6 @@ namespace MidiToWav
         {
             this.Type = ChunkType.Header;
         }
-
     }
 
     public class DivisionInfo
@@ -288,18 +253,20 @@ namespace MidiToWav
             Type = ChunkType.Track;
             Events = new List<MidiTrackEvent>();
         }
-
     }
 
     public class MidiTrackEvent
     {
         //MTrk events can be Midi Events, sysex eventss, or meta events.
         public uint DeltaTime { get; set; }
-        public List<byte> Data { get; set; }
+        public List<byte> Data { get; set; } //used for variable length meta events
         public MidiTrackEventType EventType { get; set; }
-        public MetaEventType MetaType { get; set; }
+        public MetaEventType MetaType { get; set; } = MetaEventType.None;
         public MidiController Controller { get; set; } = MidiController.None;
         public int ChannelNumber { get; set; }
+        public byte KeyNumber { get; set; }
+        public byte Value { get; set; } //Velocity in most cases, value in Control Change, new program in Program Change
+        public ushort FourteenBit { get; set; } //for Pitch Wheel and Song Pointer
 
         public MidiTrackEvent(uint DeltaTime, List<byte> Message)
         {
@@ -313,8 +280,4 @@ namespace MidiToWav
             Data = new List<byte>();
         }
     }
-
-
-
-
 }
